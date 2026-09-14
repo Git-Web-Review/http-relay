@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -411,5 +412,82 @@ func TestHealthEndpointReportsRedisState(t *testing.T) {
 	}
 	if body.Deliveries["delivered"] != 3 {
 		t.Errorf("delivered = %d, want 3", body.Deliveries["delivered"])
+	}
+}
+
+func TestBlockPrivateNetworksDefaultsToOn(t *testing.T) {
+	// Empty, not absent: keeps the test hermetic if the variable happens to be
+	// set in the environment of whoever runs the tests.
+	t.Setenv("WEBHOOK_BLOCK_PRIVATE_NETWORKS", "")
+
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() = %v", err)
+	}
+
+	if !config.BlockPrivateNetworks {
+		t.Error("BlockPrivateNetworks defaults to false; a user-supplied webhook URL could reach the internal network")
+	}
+}
+
+func TestBlockPrivateNetworksCanBeTurnedOff(t *testing.T) {
+	t.Setenv("WEBHOOK_BLOCK_PRIVATE_NETWORKS", "false")
+
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() = %v", err)
+	}
+
+	if config.BlockPrivateNetworks {
+		t.Error("WEBHOOK_BLOCK_PRIVATE_NETWORKS=false was ignored")
+	}
+}
+
+func TestIsPrivateAddress(t *testing.T) {
+	blocked := []string{
+		"127.0.0.1", "0.0.0.0", "10.0.0.1", "172.16.0.1", "172.31.255.255",
+		"192.168.1.5", "169.254.169.254", "100.64.0.1", "100.127.255.255",
+		"224.0.0.1", "::1", "::", "fe80::1", "fc00::1", "fd12:3456::1",
+		"ff02::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1",
+	}
+	for _, address := range blocked {
+		if !isPrivateAddress(net.ParseIP(address)) {
+			t.Errorf("isPrivateAddress(%q) = false, want true", address)
+		}
+	}
+
+	allowed := []string{
+		"8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "192.169.0.1",
+		"100.63.255.255", "100.128.0.1", "223.255.255.255",
+		"2606:4700:4700::1111", "::ffff:8.8.8.8",
+	}
+	for _, address := range allowed {
+		if isPrivateAddress(net.ParseIP(address)) {
+			t.Errorf("isPrivateAddress(%q) = true, want false", address)
+		}
+	}
+
+	if !isPrivateAddress(nil) {
+		t.Error("isPrivateAddress(nil) = false, want true: an unparsable address must not be dialled")
+	}
+}
+
+func TestDispatcherReachesLoopbackOnlyWhenBlockingIsOff(t *testing.T) {
+	var attempts atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	config := testConfig("https://app.test")
+	config.BlockPrivateNetworks = false
+	dispatcher, closeDispatcher := newTestDispatcher(t, config)
+	dispatcher.Enqueue(webhookEvent(server.URL, true))
+	closeDispatcher()
+
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("loopback endpoint was reached %d time(s), want 1", got)
 	}
 }

@@ -41,6 +41,12 @@ func run() error {
 		return err
 	}
 
+	// The password is read separately rather than from the URL: generated in
+	// base64 it contains `/`, `+` and `=`, which break URL parsing.
+	if config.RedisPassword != "" {
+		options.Password = config.RedisPassword
+	}
+
 	// The signal context stops the subscription; deliveries keep their own
 	// context so the ones already queued still get their grace period.
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

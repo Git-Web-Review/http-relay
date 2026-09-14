@@ -12,11 +12,12 @@ import (
 
 // Config holds every knob the relay reads from the environment at startup.
 type Config struct {
-	RedisURL     string
-	RedisChannel string
-	FrontendURL  string
-	ListenAddr   string
-	DryRun       bool
+	RedisURL      string
+	RedisPassword string
+	RedisChannel  string
+	FrontendURL   string
+	ListenAddr    string
+	DryRun        bool
 
 	// Delivery
 	Workers        int
@@ -126,11 +127,12 @@ func envHostList(key string) []string {
 // sibling IRC and email relays use where the setting is shared.
 func LoadConfig() (Config, error) {
 	config := Config{
-		RedisURL:     envString("REDIS_URL", "redis://localhost:6379"),
-		RedisChannel: envString("REDIS_CHANNEL", "notifications:webhook"),
-		FrontendURL:  strings.TrimRight(envString("FRONTEND_URL", "http://localhost:5173"), "/"),
-		ListenAddr:   fmt.Sprintf(":%d", envInt("PORT", 3002, 1, 65535)),
-		DryRun:       envBool("HTTP_RELAY_DRY_RUN", false),
+		RedisURL:      envString("REDIS_URL", "redis://localhost:6379"),
+		RedisPassword: os.Getenv("REDIS_PASSWORD"),
+		RedisChannel:  envString("REDIS_CHANNEL", "notifications:webhook"),
+		FrontendURL:   strings.TrimRight(envString("FRONTEND_URL", "http://localhost:5173"), "/"),
+		ListenAddr:    fmt.Sprintf(":%d", envInt("PORT", 3002, 1, 65535)),
+		DryRun:        envBool("HTTP_RELAY_DRY_RUN", false),
 
 		Workers:        envInt("WEBHOOK_WORKERS", 4, 1, 256),
 		QueueSize:      envInt("WEBHOOK_QUEUE_SIZE", 1024, 1, 100000),
@@ -140,8 +142,11 @@ func LoadConfig() (Config, error) {
 		RetryMaxDelay:  envDuration("WEBHOOK_RETRY_MAX_DELAY", 30*time.Second, time.Second, 10*time.Minute),
 		UserAgent:      envString("WEBHOOK_USER_AGENT", "git-web-review-http-relay/1.0"),
 
-		AllowedHosts:         envHostList("WEBHOOK_ALLOWED_HOSTS"),
-		BlockPrivateNetworks: envBool("WEBHOOK_BLOCK_PRIVATE_NETWORKS", false),
+		AllowedHosts: envHostList("WEBHOOK_ALLOWED_HOSTS"),
+		// Safe by default: the URL comes from a user's own settings, and the
+		// relay dials it from inside the internal network. Turn it off
+		// explicitly for a deployment whose endpoints really are internal.
+		BlockPrivateNetworks: envBool("WEBHOOK_BLOCK_PRIVATE_NETWORKS", true),
 	}
 
 	if _, err := url.Parse(config.RedisURL); err != nil {

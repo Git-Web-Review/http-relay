@@ -108,7 +108,7 @@ The relay also serves a small HTTP surface of its own:
 | `WEBHOOK_RETRY_MAX_DELAY`        | `30s`                            | Backoff ceiling.                                                        |
 | `WEBHOOK_USER_AGENT`             | `git-web-review-http-relay/1.0`  | `User-Agent` sent with each delivery.                                   |
 | `WEBHOOK_ALLOWED_HOSTS`          | empty (all)                      | Comma-separated hosts users may target; subdomains of a listed host pass. Empty, or `*`, allows every host. |
-| `WEBHOOK_BLOCK_PRIVATE_NETWORKS` | `false`                          | Refuse targets resolving to loopback, private or link-local addresses.  |
+| `WEBHOOK_BLOCK_PRIVATE_NETWORKS` | `true`                           | Refuse targets resolving to loopback, private, CGNAT or link-local addresses. |
 
 Durations accept a Go duration (`10s`, `1m500ms`) or a bare number of
 milliseconds.
@@ -126,11 +126,35 @@ WEBHOOK_ALLOWED_HOSTS=*.company.tld
 A listed host also matches its subdomains, so `company.tld` and `*.company.tld`
 are equivalent; the `*.` prefix is accepted for readability.
 
-`WEBHOOK_ALLOWED_HOSTS` and `WEBHOOK_BLOCK_PRIVATE_NETWORKS` are both
-unrestricted by default, because the usual target is an internal chat server.
-Tighten them when the users setting these URLs are not fully trusted: the
-webhook URL is user-supplied, so by default the relay will call whatever it is
-given from inside the network.
+### Reaching private addresses
+
+The webhook URL comes from a user's own settings, and the relay dials it from
+inside the Docker network — where postgres and redis sit with no password of
+their own. `WEBHOOK_BLOCK_PRIVATE_NETWORKS` is therefore **on by default**: a
+target resolving to a loopback, private, CGNAT or link-local address is refused.
+
+The check runs in the dialer's `Control` hook, so it sees the address actually
+about to be dialled, after DNS resolution. A hostname that resolves to a private
+IP is caught there rather than trusted from the URL, which is what makes it
+resistant to DNS rebinding. Redirects are never followed, so a `302` to an
+internal address cannot smuggle past it either.
+
+Turn it off only when your notification endpoints genuinely live on private
+addresses:
+
+```env
+WEBHOOK_BLOCK_PRIVATE_NETWORKS=false
+WEBHOOK_ALLOWED_HOSTS=chat.company.tld
+```
+
+The two settings are independent and compose: an allow-listed host still has to
+pass the private-address check. Pair them as above so that turning the check off
+does not leave the whole internal network reachable.
+
+The backend applies the same two settings when the user saves the URL, so a
+target this relay would refuse is rejected at that point with an explicit error
+instead of being dropped silently at delivery time. That check is for ergonomics
+and defence in depth; DNS can change in between, so the authority stays here.
 
 ## Development
 
