@@ -91,6 +91,10 @@ each event listed next to its decorator, can be downloaded from the webhook
 field of the user settings page. Its source lives in the frontend:
 [`src/pages/settings/webhook_receiver.py`](https://github.com/Git-Web-Review/frontend/blob/main/src/pages/settings/webhook_receiver.py).
 
+When the URL is tested from that page, or saved with webhooks on, the backend
+first POSTs a `TEST` event of the same shape to it, and refuses the URL unless
+it answers `2xx` within 5 seconds.
+
 ## Endpoints
 
 The relay also serves a small HTTP surface of its own:
