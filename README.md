@@ -82,6 +82,15 @@ exponential backoff and jitter, honouring `Retry-After`; other `4xx` are
 treated as permanent and dropped. Redirects are not followed — the
 notification goes to the configured URL or nowhere.
 
+### Receiving webhooks
+
+A standard-library Python receiver to start from, with one decorator per event
+type (`@on_review_pending`, `@on_comment_received`, …, `@on_comment` and
+`@on_review` for groups, `@on("*")` for everything) and the payload fields of
+each event listed next to its decorator, can be downloaded from the webhook
+field of the user settings page. Its source lives in the frontend:
+[`src/pages/settings/webhook_receiver.py`](https://github.com/Git-Web-Review/frontend/blob/main/src/pages/settings/webhook_receiver.py).
+
 ## Endpoints
 
 The relay also serves a small HTTP surface of its own:
