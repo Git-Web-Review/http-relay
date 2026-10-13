@@ -155,6 +155,62 @@ func TestDispatcherRetriesServerErrorsThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestDispatcherGivesUpAfterMaxAttempts(t *testing.T) {
+	var attempts atomic.Int64
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	dispatcher, closeDispatcher := newTestDispatcher(t, testConfig("https://app.test"))
+	dispatcher.Enqueue(webhookEvent(server.URL, true))
+	closeDispatcher()
+
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+	if failed := dispatcher.Stats().Failed.Load(); failed != 1 {
+		t.Errorf("failed = %d, want 1", failed)
+	}
+	if retried := dispatcher.Stats().Retried.Load(); retried != 2 {
+		t.Errorf("retried = %d, want 2", retried)
+	}
+}
+
+func TestDispatcherRetriesTimeoutsAndUnreachableHosts(t *testing.T) {
+	var slowAttempts atomic.Int64
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		slowAttempts.Add(1)
+		<-release
+	}))
+	defer slow.Close()
+	defer close(release)
+
+	unreachable := httptest.NewServer(http.NotFoundHandler())
+	unreachableURL := unreachable.URL
+	unreachable.Close()
+
+	config := testConfig("https://app.test")
+	config.Timeout = 50 * time.Millisecond
+	dispatcher, closeDispatcher := newTestDispatcher(t, config)
+	dispatcher.Enqueue(webhookEvent(slow.URL, true))
+	dispatcher.Enqueue(webhookEvent(unreachableURL, true))
+	closeDispatcher()
+
+	if got := slowAttempts.Load(); got != 3 {
+		t.Errorf("attempts on a timing out endpoint = %d, want 3", got)
+	}
+	if failed := dispatcher.Stats().Failed.Load(); failed != 2 {
+		t.Errorf("failed = %d, want 2", failed)
+	}
+	if retried := dispatcher.Stats().Retried.Load(); retried != 4 {
+		t.Errorf("retried = %d, want 4", retried)
+	}
+}
+
 func TestDispatcherDoesNotRetryClientErrors(t *testing.T) {
 	var attempts atomic.Int64
 
